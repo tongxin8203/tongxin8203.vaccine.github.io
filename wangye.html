@@ -1,0 +1,637 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>百日咳疫苗配方問題分析與解決方案</title>
+    <!-- 使用全球 CDN，Tailwind CSS 和 Chart.js 庫已通過 CDN 引用，通常在全球範圍內（包括中國大陸）具有較好的訪問性。 -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- 已移除 Google Fonts 外部調用，改用本地系統字體堆棧，提高訪問穩定性。 -->
+    
+    <!-- Chosen Palette: Calm Harmony (Light neutrals with soft blue and teal accents) -->
+    <!-- Application Structure Plan: The application is structured into four logical, sequential sections to guide the user from problem identification to a concrete solution. 1) '問題總覽' (Problem Overview) clearly defines the issue. 2) '系統參數分析' (System Parameter Analysis) provides an interactive dashboard to explore the properties of each component (adjuvant, antigen, buffer), including a key visualization of Zeta potential vs. pH. 3) '根本原因探討' (Root Cause Analysis) explains the core scientific principle of electrostatic shielding. 4) '解決方案與實驗建議' (Solution & Experimental Plan) offers a direct, interactive tool to model the proposed solution and provides a clear, actionable experimental plan. This problem-solving-oriented flow is more effective than a static report, as it educates the user on the "why" and empowers them to design a solution. -->
+    <!-- Visualization & Content Choices: 
+        - Problem/Success states (Section 1): Goal is to inform. Method is using simple HTML/CSS cards with icons for quick visual distinction between the failing and succeeding formulations. Interaction is minimal. Justification is clarity and immediate problem framing.
+        - Zeta Potential Chart (Section 2): Goal is to educate on a core concept. Method is a Chart.js line chart showing how surface charge changes with pH relative to the PZC. Interaction includes tooltips and clear labeling of the operating pH range. This visualizes why the '-15mV' adjuvant is less stable. Library is Chart.js on a Canvas element.
+        - Charge Shielding Diagram (Section 3): Goal is to explain the root cause. Method is using structured HTML divs and Tailwind CSS to create a simplified diagram of particles with and without salt shielding. This avoids SVG and makes the concept easy to grasp.
+        - Ionic Strength Calculator (Section 4): Goal is to provide a practical tool. Method is an interactive calculator using HTML inputs and vanilla JS. Interaction allows the user to change the FHA's salt concentration and instantly see the impact on the final mixture. This directly answers the user's question and helps them plan experiments.
+        - LLM Features (New Section): Added professional terminology explanation and structured experimental checklist generation using the Gemini API to provide interactive analysis assistance.
+        - CONFIRMATION: NO SVG graphics used. NO Mermaid JS used. -->
+    <style>
+        body {
+            /* 針對中國大陸用戶優化的系統字體堆棧：優先使用本地中文字體 */
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+            background-color: #f8f9fa;
+            color: #343a40;
+        }
+        .chart-container {
+            position: relative;
+            width: 100%;
+            max-width: 600px;
+            margin-left: auto;
+            margin-right: auto;
+            height: 300px;
+            max-height: 400px;
+        }
+        @media (min-width: 768px) {
+            .chart-container {
+                height: 350px;
+            }
+        }
+        .section-title {
+            font-size: 1.75rem;
+            font-weight: 700;
+            color: #005f73;
+            padding-bottom: 0.5rem;
+            border-bottom: 3px solid #0a9396;
+            margin-bottom: 2rem;
+            text-align: center;
+        }
+        .card {
+            background-color: white;
+            border-radius: 0.75rem;
+            box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+            padding: 1.5rem;
+            transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
+        }
+        .card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -2px rgb(0 0 0 / 0.1);
+        }
+        .param-value {
+            font-weight: 700;
+            color: #001219;
+        }
+        .btn-primary {
+            background-color: #0a9396;
+            color: white;
+            font-weight: 500;
+            padding: 0.75rem 1.5rem;
+            border-radius: 0.5rem;
+            transition: background-color 0.2s;
+        }
+        .btn-primary:hover {
+            background-color: #005f73;
+        }
+        .btn-secondary {
+            background-color: #f0f3f5;
+            color: #005f73;
+            border: 1px solid #0a9396;
+            font-weight: 500;
+            padding: 0.75rem 1.5rem;
+            border-radius: 0.5rem;
+            transition: background-color 0.2s;
+        }
+        .btn-secondary:hover {
+            background-color: #e2e6eb;
+        }
+    </style>
+</head>
+<body class="antialiased">
+
+    <header class="bg-white shadow-md sticky top-0 z-10">
+        <nav class="container mx-auto px-6 py-4 flex justify-between items-center">
+            <div class="text-2xl font-bold text-gray-800">
+                <span class="text-[#0a9396]">疫苗開發助手</span>
+            </div>
+            <div class="hidden md:flex space-x-6 text-gray-600">
+                <a href="#problem" class="hover:text-[#0a9396]">問題總覽</a>
+                <a href="#analysis" class="hover:text-[#0a9396]">參數分析</a>
+                <a href="#cause" class="hover:text-[#0a9396]">原因探討</a>
+                <a href="#gemini-tools" class="hover:text-[#0a9396]">AI 輔助</a>
+                <a href="#solution" class="hover:text-[#0a9396]">解決方案</a>
+            </div>
+        </nav>
+    </header>
+
+    <main class="container mx-auto px-6 py-12">
+        <section id="intro" class="text-center mb-16">
+            <h1 class="text-4xl font-bold text-gray-900 mb-4">FHA - 磷酸鋁佐劑吸附配方問題分析報告</h1>
+            <p class="text-lg text-gray-600 max-w-3xl mx-auto">一份互動式報告，旨在診斷百日咳絲狀血凝素 (FHA) 抗原在與特定磷酸鋁佐劑混合時出現沉澱的根本原因，並提供可行的解決方案。</p>
+        </section>
+
+        <section id="problem" class="mb-16">
+            <h2 class="section-title">問題總覽</h2>
+            <div class="grid md:grid-cols-2 gap-8">
+                <div class="card border-l-4 border-red-500">
+                    <div class="flex items-center mb-4">
+                        <span class="text-3xl mr-4">❌</span>
+                        <h3 class="text-2xl font-bold text-red-700">問題配方 (出現沉澱)</h3>
+                    </div>
+                    <p class="text-gray-700">當 FHA 抗原溶液與 ZETA 電位為 <span class="param-value">-15mV</span> 的磷酸鋁佐劑混合時，立即觀察到明顯的沉澱現象，這表明配方存在物理不穩定性。</p>
+                </div>
+                <div class="card border-l-4 border-green-500">
+                    <div class="flex items-center mb-4">
+                        <span class="text-3xl mr-4">✅</span>
+                        <h3 class="text-2xl font-bold text-green-700">成功配方 (無沉澱)</h3>
+                    </div>
+                    <p class="text-gray-700">相對地，當 FHA 抗原與 ZETA 電位為 <span class="param-value">-35mV</span> 的磷酸鋁佐劑混合時，溶液保持均勻分散，未出現沉澱，表明配方穩定。</p>
+                </div>
+            </div>
+        </section>
+
+        <section id="analysis" class="mb-16">
+            <h2 class="section-title">系統參數分析</h2>
+            <p class="text-center text-gray-600 mb-8 max-w-3xl mx-auto">為了理解問題的根源，我們需要分析配方中每個組分的關鍵理化性質。最終的混合環境決定了顆粒間的相互作用力。</p>
+            <div class="grid md:grid-cols-3 gap-8 mb-12 text-center">
+                <div class="card">
+                    <h4 class="text-xl font-bold mb-3 text-[#005f73]">1. 佐劑 (磷酸鋁)</h4>
+                    <p class="text-sm text-gray-600 mb-2">在 1g/L NaCl 中稀釋</p>
+                    <ul class="text-left space-y-2">
+                        <li><strong>零電荷點 (PZC):</strong> <span class="param-value">~5.2</span></li>
+                        <li><strong>操作 pH:</strong> <span class="param-value">~6.2 - 6.5</span></li>
+                        <li><strong>表面電荷:</strong> <span class="param-value">負電荷</span> (因 pH > PZC)</li>
+                        <li><strong>ZETA 電位 (問題):</strong> <span class="param-value text-red-600">-15mV (弱負電)</span></li>
+                        <li><strong>ZETA 電位 (成功):</strong> <span class="param-value text-green-600">-35mV (強負電)</span></li>
+                    </ul>
+                </div>
+                <div class="card">
+                    <h4 class="text-xl font-bold mb-3 text-[#005f73]">2. 抗原 (FHA)</h4>
+                    <p class="text-sm text-gray-600 mb-2">pH 7.0 儲存液</p>
+                    <ul class="text-left space-y-2">
+                        <li><strong>緩衝液:</strong> <span class="param-value">10mM PB, pH 7.0</span></li>
+                        <li><strong>鹽濃度:</strong> <span class="param-value text-red-600">500mM NaCl (高)</span></li>
+                        <li><strong>等電點 (pI):</strong> <span class="param-value">~6.0 - 6.9</span></li>
+                        <li><strong>表面電荷:</strong> <span class="param-value">淨負電或接近中性</span></li>
+                    </ul>
+                </div>
+                <div class="card">
+                    <h4 class="text-xl font-bold mb-3 text-[#005f73]">3. 最終混合體系</h4>
+                     <p class="text-sm text-gray-600 mb-2">佐劑:抗原 ≈ 2:1 混合</p>
+                    <ul class="text-left space-y-2">
+                        <li><strong>最終 pH:</strong> <span class="param-value">~6.5</span> (估計值)</li>
+                        <li><strong>最終緩衝液:</strong> <span class="param-value">10mM PB</span></li>
+                        <li><strong>最終 NaCl 濃度:</strong> <span class="param-value text-red-600">~167mM (高離子強度)</span></li>
+                    </ul>
+                </div>
+            </div>
+            <div class="card">
+                <h3 class="text-xl font-bold text-center mb-4 text-[#005f73]">佐劑表面電位 vs. pH</h3>
+                <p class="text-center text-gray-600 text-sm mb-4">此圖表說明了佐劑的表面電荷如何隨 pH 變化。在我們的操作 pH (約 6.5)下，兩種佐劑都帶負電，但 <span class="font-bold text-red-600">-15mV</span> 的佐劑其排斥力要弱得多，這使其對環境變化更為敏感。</p>
+                <div class="chart-container">
+                    <canvas id="zetaPotentialChart"></canvas>
+                </div>
+            </div>
+        </section>
+
+        <section id="cause" class="mb-16">
+            <h2 class="section-title">根本原因探討：靜電屏蔽效應</h2>
+            <p class="text-center text-gray-600 mb-8 max-w-3xl mx-auto">沉澱問題的核心在於 <span class="font-bold">高離子強度</span> 與 <span class="font-bold">弱表面電荷</span> 的協同作用。FHA 溶液中高濃度的 NaCl (500mM) 導致最終混合體系的離子強度過高。</p>
+            <div class="grid md:grid-cols-2 gap-8">
+                <div class="card">
+                    <h4 class="text-lg font-bold mb-3">低離子強度環境 (理想)</h4>
+                    <p class="mb-4">在低鹽環境中，帶負電的佐劑顆粒和 FHA 分子之間存在強大的靜電排斥力，使它們能夠穩定地懸浮在溶液中。</p>
+                    <div class="flex justify-center items-center h-24">
+                        <div class="flex items-center space-x-8">
+                            <div class="w-10 h-10 bg-blue-300 rounded-full flex items-center justify-center text-xl font-bold text-blue-800">-</div>
+                            <div class="text-3xl text-gray-400">↔</div>
+                            <div class="w-10 h-10 bg-blue-300 rounded-full flex items-center justify-center text-xl font-bold text-blue-800">-</div>
+                        </div>
+                    </div>
+                     <p class="text-center font-semibold mt-2 text-green-600">強排斥力 = 穩定</p>
+                </div>
+                <div class="card">
+                    <h4 class="text-lg font-bold mb-3">高離子強度環境 (問題)</h4>
+                    <p class="mb-4">高濃度的鹽離子 (Na⁺, Cl⁻) 會在顆粒周圍形成一個離子云，"屏蔽" 了它們的表面電荷。這極大地削弱了靜電排斥力。</p>
+                    <div class="flex justify-center items-center h-24">
+                         <div class="flex items-center space-x-1">
+                            <div class="w-10 h-10 bg-red-300 rounded-full flex items-center justify-center text-xl font-bold text-red-800">-</div>
+                            <div class="text-sm text-gray-500">Na⁺ Cl⁻</div>
+                            <div class="text-xl text-red-500">→←</div>
+                             <div class="text-sm text-gray-500">Na⁺ Cl⁻</div>
+                            <div class="w-10 h-10 bg-red-300 rounded-full flex items-center justify-center text-xl font-bold text-red-800">-</div>
+                        </div>
+                    </div>
+                     <p class="text-center font-semibold mt-2 text-red-600">弱排斥力 = 聚集/沉澱</p>
+                </div>
+            </div>
+            <div class="mt-8 p-6 bg-blue-50 border border-blue-200 rounded-lg">
+                <h4 class="font-bold text-lg text-blue-800">結論</h4>
+                <p class="text-blue-900">對於 ZETA 電位僅為 <span class="font-bold">-15mV</span> 的佐劑，其固有的靜電排斥力本就微弱。在高鹽環境下，這層排斥力被進一步削弱，使得范德華力等吸引力佔據主導，導致顆粒聚集並最終沉澱。而 <span class="font-bold">-35mV</span> 的佐劑擁有足夠強的電荷，即使在一定程度的屏蔽下仍能維持體系穩定。</p>
+            </div>
+        </section>
+        
+        <!-- Gemini LLM Features -->
+        <section id="gemini-tools" class="mb-16">
+            <h2 class="section-title">✨ AI 輔助與配方優化</h2>
+            <p class="text-center text-gray-600 mb-8 max-w-3xl mx-auto">使用 Gemini 模型來協助您快速理解專業術語或生成詳細的實驗優化步驟。</p>
+
+            <div class="grid md:grid-cols-2 gap-8">
+                <!-- Tool 1: Terminology Explainer -->
+                <div class="card p-6 border-l-4 border-yellow-500">
+                    <h4 class="text-xl font-bold mb-3 text-yellow-800">✨ 專業術語解釋</h4>
+                    <p class="text-sm text-gray-600 mb-4">輸入一個技術術語（例如：**Zeta電位**，**DLVO理論**，**PZC**），讓 AI 提供一個簡潔的專業解釋。</p>
+                    <div class="flex flex-col sm:flex-row gap-2 mb-4">
+                        <input type="text" id="termInput" placeholder="輸入術語..." class="flex-grow p-2 border border-gray-300 rounded-md focus:ring-[#0a9396] focus:border-[#0a9396]">
+                        <button onclick="explainTerm()" id="explainBtn" class="btn-primary flex-shrink-0 whitespace-nowrap">✨ 獲取解釋</button>
+                    </div>
+                    <div id="explanationResult" class="min-h-16 p-3 bg-gray-50 border border-gray-200 rounded-md text-gray-700">
+                        <!-- 結果將顯示在這裡 -->
+                        <span class="text-gray-500">點擊按鈕獲取解釋...</span>
+                    </div>
+                </div>
+
+                <!-- Tool 2: Structured Experimental Checklist Generator -->
+                <div class="card p-6 border-l-4 border-green-500">
+                    <h4 class="text-xl font-bold mb-3 text-green-800">✨ 生成優化實驗清單</h4>
+                    <p class="text-sm text-gray-600 mb-4">根據當前 FHA/磷酸鋁問題的背景，生成一份詳細的**降低離子強度優化實驗清單**，供實驗室技術人員使用。</p>
+                    <button onclick="generateChecklist()" id="checklistBtn" class="btn-secondary w-full">✨ 生成優化實驗清單</button>
+                    <div id="checklistResult" class="mt-4 min-h-16 p-3 bg-gray-50 border border-gray-200 rounded-md text-gray-700">
+                        <!-- 結果將顯示在這裡 -->
+                        <span class="text-gray-500">點擊按鈕生成清單...</span>
+                    </div>
+                </div>
+            </div>
+        </section>
+        <!-- End Gemini LLM Features -->
+
+        <section id="solution">
+            <h2 class="section-title">解決方案與實驗建議</h2>
+            <p class="text-center text-gray-600 mb-8 max-w-3xl mx-auto">是的，您關於降低離子強度的想法是完全正確的。這是解決此問題最直接、最有效的方法。主要策略是降低 FHA 儲存液中的 NaCl 濃度。</p>
+            
+            <div class="card mb-10">
+                <h3 class="text-xl font-bold text-center mb-4 text-[#005f73]">離子強度影響模擬器</h3>
+                <p class="text-center text-gray-600 text-sm mb-6">使用下面的滑塊來模擬改變 FHA 溶液中的 NaCl 濃度後，最終混合體系的離子強度變化。目標是將其降低到一個更合理的範圍（例如，低於 100mM）。</p>
+                <div class="space-y-4 max-w-lg mx-auto">
+                    <div>
+                        <label for="fhaNacl" class="block mb-2 font-medium text-gray-700">FHA 溶液 NaCl 濃度 (mM): <span id="fhaNaclValue" class="font-bold text-[#0a9396]">500</span> mM</label>
+                        <input type="range" id="fhaNacl" min="0" max="500" value="500" class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer">
+                    </div>
+                    <div class="text-center p-4 bg-gray-100 rounded-lg">
+                        <p class="text-gray-800">預計最終混合物 NaCl 濃度:</p>
+                        <p id="finalNacl" class="text-3xl font-bold text-[#005f73]">166.7 mM</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card bg-teal-50 border-teal-200 border">
+                 <h3 class="text-xl font-bold text-center mb-4 text-teal-800">推薦的實驗方案</h3>
+                 <p class="text-center text-gray-700 mb-6">建議採用逐步降低 FHA 溶液鹽濃度的方法，以找到能夠穩定吸附且不產生沉澱的最佳條件。</p>
+                 <ol class="list-decimal list-inside space-y-4 text-gray-800">
+                    <li>
+                        <span class="font-bold">準備新的 FHA 溶液：</span>
+                        將 FHA 抗原透析或更換緩衝液至 <span class="param-value">10mM PB, pH 7.0</span> 的緩衝液中，並分別配製含有以下 NaCl 濃度的系列溶液：
+                        <ul class="list-disc list-inside ml-6 mt-2 bg-white p-3 rounded">
+                            <li><strong>第一步：</strong> 250 mM NaCl</li>
+                            <li><strong>第二步：</strong> 150 mM NaCl</li>
+                            <li><strong>第三步：</strong> 50 mM NaCl</li>
+                            <li><strong>第四步：：</strong> 0 mM NaCl (僅含緩衝液)</li>
+                        </ul>
+                    </li>
+                    <li>
+                        <span class="font-bold">進行吸附實驗：</span>
+                        使用 ZETA 電位為 <span class="param-value text-red-600">-15mV</span> 的磷酸鋁佐劑，按照現有的操作流程（10倍稀釋佐劑，然後以 2:1 比例混合佐劑和 FHA 溶液），分別與上述新配製的 FHA 溶液進行吸附實驗。
+                    </li>
+                    <li>
+                        <span class="font-bold">觀察與評估：</span>
+                        在混合後立即並在室溫下靜置一段時間（例如 1 小時）後，通過目測觀察是否有沉澱產生。記錄下不會引起沉澱的最高 NaCl 濃度。
+                    </li>
+                    <li>
+                        <span class="font-bold">（可選）進一步優化：</span>
+                        如果需要，可以在找到的穩定 NaCl 濃度範圍內，或通過微調吸附緩衝液的 pH（例如從 6.2 提高到 6.5 或 6.8）來進一步優化吸附效率和穩定性。
+                    </li>
+                 </ol>
+            </div>
+        </section>
+
+    </main>
+    
+    <footer class="bg-white mt-16 py-6 border-t">
+        <div class="container mx-auto text-center text-gray-500">
+            <p>&copy; 2025 疫苗開發助手。此報告基於提供的數據生成，僅供研發參考。</p>
+        </div>
+    </footer>
+
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    const ctx = document.getElementById('zetaPotentialChart').getContext('2d');
+    
+    const data = {
+        labels: [4, 4.5, 5, 5.2, 5.5, 6, 6.2, 6.5, 7, 7.5],
+        datasets: [
+            {
+                label: '問題佐劑 (-15mV @ pH 6.2)',
+                data: [15, 8, 2, 0, -4, -12, -15, -18, -23, -27],
+                borderColor: 'rgba(239, 68, 68, 1)',
+                backgroundColor: 'rgba(239, 68, 68, 0.2)',
+                fill: false,
+                tension: 0.4
+            },
+            {
+                label: '成功佐劑 (-35mV @ pH 6.2)',
+                data: [25, 18, 10, 0, -8, -25, -35, -40, -45, -48],
+                borderColor: 'rgba(34, 197, 94, 1)',
+                backgroundColor: 'rgba(34, 197, 94, 0.2)',
+                fill: false,
+                tension: 0.4
+            }
+        ]
+    };
+
+    const config = {
+        type: 'line',
+        data: data,
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                title: {
+                    display: true,
+                    text: 'ZETA 電位 vs. pH'
+                },
+                tooltip: {
+                    mode: 'index',
+                    intersect: false
+                },
+            },
+            scales: {
+                x: {
+                    title: {
+                        display: true,
+                        text: 'pH'
+                    }
+                },
+                y: {
+                    title: {
+                        display: true,
+                        text: 'ZETA 電位 (mV)'
+                    },
+                    beginAtZero: false
+                }
+            },
+            annotation: {
+                annotations: {
+                    line1: {
+                        type: 'line',
+                        xMin: 5.2,
+                        xMax: 5.2,
+                        borderColor: 'rgb(59, 130, 246)',
+                        borderWidth: 2,
+                        borderDash: [6, 6],
+                        label: {
+                            content: 'PZC = 5.2',
+                            enabled: true,
+                            position: 'start'
+                        }
+                    },
+                    box1: {
+                        type: 'box',
+                        xMin: 6.2,
+                        xMax: 6.5,
+                        backgroundColor: 'rgba(255, 159, 64, 0.2)',
+                        borderColor: 'rgba(255, 159, 64, 1)',
+                        borderWidth: 1,
+                        label: {
+                            content: '操作範圍',
+                            enabled: true,
+                            position: "center"
+                        }
+                    }
+                }
+            }
+        }
+    };
+
+    // A simple polyfill for Chart.js annotation plugin since it's not included by default
+    const annotationPlugin = {
+      id: 'annotation',
+      beforeDraw: (chart, args, options) => {
+        if (!options || !options.annotations) {
+          return;
+        }
+        const { ctx, chartArea: { top, bottom, left, right }, scales: { x, y } } = chart;
+        
+        Object.values(options.annotations).forEach(annotation => {
+            if (annotation.type === 'line') {
+                ctx.save();
+                ctx.beginPath();
+                ctx.strokeStyle = annotation.borderColor;
+                ctx.lineWidth = annotation.borderWidth;
+                if(annotation.borderDash) ctx.setLineDash(annotation.borderDash);
+                
+                const xVal = x.getPixelForValue(annotation.xMin);
+                ctx.moveTo(xVal, top);
+                ctx.lineTo(xVal, bottom);
+                ctx.stroke();
+                
+                if(annotation.label && annotation.label.enabled) {
+                    ctx.fillStyle = annotation.borderColor;
+                    ctx.font = '12px sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.fillText(annotation.label.content, xVal, top + 15);
+                }
+                ctx.restore();
+            } else if (annotation.type === 'box') {
+                ctx.save();
+                const xMin = x.getPixelForValue(annotation.xMin);
+                const xMax = x.getPixelForValue(annotation.xMax);
+                ctx.fillStyle = annotation.backgroundColor;
+                ctx.strokeStyle = annotation.borderColor;
+                ctx.lineWidth = annotation.borderWidth;
+                ctx.fillRect(xMin, top, xMax - xMin, bottom - top);
+                ctx.strokeRect(xMin, top, xMax - xMin, bottom - top);
+                 if(annotation.label && annotation.label.enabled) {
+                    ctx.fillStyle = 'rgba(0,0,0,0.6)';
+                    ctx.font = '12px sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.fillText(annotation.label.content, (xMin+xMax)/2, top + 20);
+                }
+                ctx.restore();
+            }
+        });
+      }
+    };
+    
+    new Chart(ctx, { ...config, plugins: [annotationPlugin] });
+
+
+    const fhaNaclSlider = document.getElementById('fhaNacl');
+    const fhaNaclValue = document.getElementById('fhaNaclValue');
+    const finalNacl = document.getElementById('finalNacl');
+
+    function calculateFinalConcentration() {
+        const fhaConcentration = parseFloat(fhaNaclSlider.value);
+        
+        // 假設吸附混合液 (佐劑) : FHA 溶液 = 2:1
+        // 吸附混合液中的鹽分貢獻 (來自 1g/L NaCl 的佐劑稀釋 10 倍) 約為 1.7mM，可忽略不計。
+        // 所以最終濃度主要來自 FHA 溶液，稀釋 1/3。
+        const finalConcentration = (fhaConcentration * 1) / 3;
+
+        fhaNaclValue.textContent = fhaConcentration.toFixed(0);
+        finalNacl.textContent = finalConcentration.toFixed(1) + ' mM';
+    }
+
+    fhaNaclSlider.addEventListener('input', calculateFinalConcentration);
+    calculateFinalConcentration(); // 初始計算
+
+    document.querySelectorAll('a[href^="#"]').forEach(anchor => {
+        anchor.addEventListener('click', function (e) {
+            e.preventDefault();
+            document.querySelector(this.getAttribute('href')).scrollIntoView({
+                behavior: 'smooth'
+            });
+        });
+    });
+    
+    
+    // --- GEMINI API INTEGRATION LOGIC ---
+    const MODEL_NAME = "gemini-2.5-flash-preview-05-20";
+    const apiKey = ""; 
+    const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_NAME}:generateContent?key=${apiKey}`;
+
+    const explainBtn = document.getElementById('explainBtn');
+    const termInput = document.getElementById('termInput');
+    const explanationResult = document.getElementById('explanationResult');
+    const checklistBtn = document.getElementById('checklistBtn');
+    const checklistResult = document.getElementById('checklistResult');
+
+    /**
+     * Executes the fetch request with exponential backoff.
+     * @param {object} payload - The request body payload.
+     * @param {number} maxRetries - Maximum number of retries.
+     * @param {number} delay - Initial delay in milliseconds.
+     * @returns {Promise<object>} The JSON response.
+     */
+    async function fetchWithRetry(payload, maxRetries = 5, delay = 1000) {
+        for (let i = 0; i < maxRetries; i++) {
+            try {
+                const response = await fetch(API_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                if (response.ok) {
+                    return response.json();
+                }
+
+                if (response.status === 429 || response.status >= 500) {
+                    // Too Many Requests or Server Errors, retry needed
+                    if (i === maxRetries - 1) throw new Error('API Request failed after multiple retries.');
+                    await new Promise(resolve => setTimeout(resolve, delay * (2 ** i)));
+                } else {
+                    // Non-retryable error
+                    const errorBody = await response.json();
+                    throw new Error(`API Error: ${response.status} - ${JSON.stringify(errorBody)}`);
+                }
+            } catch (error) {
+                if (i === maxRetries - 1) throw error;
+                await new Promise(resolve => setTimeout(resolve, delay * (2 ** i)));
+            }
+        }
+    }
+
+    // --- Feature 1: Terminology Explainer ---
+    async function explainTerm() {
+        const term = termInput.value.trim();
+        if (!term) {
+            explanationResult.innerHTML = '<span class="text-red-500">請輸入一個術語。</span>';
+            return;
+        }
+
+        explanationResult.innerHTML = '<span class="text-gray-500">正在生成解釋... (請等待)</span>';
+        explainBtn.disabled = true;
+
+        const systemPrompt = "你是一名資深的疫苗配方科學家，請用簡潔、專業且易懂的中文語言，解釋所提供的化學或生物技術術語。回答限制在 150 字以內。";
+        const userQuery = `請解釋術語: ${term}`;
+
+        const payload = {
+            contents: [{ parts: [{ text: userQuery }] }],
+            systemInstruction: {
+                parts: [{ text: systemPrompt }]
+            }
+        };
+
+        try {
+            const result = await fetchWithRetry(payload);
+            const text = result.candidates?.[0]?.content?.parts?.[0]?.text || '未能獲取解釋，請重試。';
+            explanationResult.innerHTML = `<p class="font-semibold text-gray-800">${term}：</p><p>${text.replace(/\n/g, '<br>')}</p>`;
+        } catch (error) {
+            console.error("Gemini API Error for Terminology:", error);
+            explanationResult.innerHTML = '<span class="text-red-500">連線錯誤或 API 請求失敗。請檢查控制台。</span>';
+        } finally {
+            explainBtn.disabled = false;
+        }
+    }
+    window.explainTerm = explainTerm; // Expose to global scope for onclick
+
+    // --- Feature 2: Structured Experimental Checklist Generator ---
+    async function generateChecklist() {
+        checklistResult.innerHTML = '<span class="text-gray-500">正在生成實驗清單... (請等待)</span>';
+        checklistBtn.disabled = true;
+
+        const systemPrompt = "你是一名經驗豐富的實驗室主任，專門處理佐劑吸附問題。請根據提供的問題背景，生成一份詳細、專業且操作性強的實驗清單，確保輸出符合規定的 JSON 格式。";
+        const userQuery = "問題背景：FHA（絲狀血凝素）儲存液含 500mM NaCl，與 Zeta 電位為 -15mV 的磷酸鋁佐劑（已稀釋）以 1:2 比例混合後立即沉澱。吸附緩衝液為 10mM PB, pH 6.2。請生成一份關於「降低 FHA 溶液 NaCl 濃度」的優化實驗清單（5 個步驟）。";
+        
+        const payload = {
+            contents: [{ parts: [{ text: userQuery }] }],
+            systemInstruction: {
+                parts: [{ text: systemPrompt }]
+            },
+            generationConfig: {
+                responseMimeType: "application/json",
+                responseSchema: {
+                    type: "OBJECT",
+                    properties: {
+                        "title": { "type": "STRING", "description": "Checklist Title." },
+                        "steps": {
+                            "type": "ARRAY",
+                            "description": "A list of detailed experimental steps.",
+                            "items": {
+                                "type": "OBJECT",
+                                "properties": {
+                                    "stepNumber": { "type": "INTEGER" },
+                                    "description": { "type": "STRING" },
+                                    "rationale": { "type": "STRING", "description": "Brief explanation of the purpose." }
+                                },
+                                "propertyOrdering": ["stepNumber", "description", "rationale"]
+                            }
+                        }
+                    },
+                    "propertyOrdering": ["title", "steps"]
+                }
+            }
+        };
+
+        try {
+            const result = await fetchWithRetry(payload);
+            const jsonText = result.candidates?.[0]?.content?.parts?.[0]?.text;
+            
+            if (!jsonText) {
+                throw new Error("Received empty response or malformed JSON text.");
+            }
+
+            const parsedJson = JSON.parse(jsonText);
+            
+            let html = `<h5 class="font-bold text-lg text-gray-900 mb-2">${parsedJson.title || '實驗優化清單'}</h5><ol class="list-decimal list-inside space-y-3">`;
+
+            if (parsedJson.steps && Array.isArray(parsedJson.steps)) {
+                parsedJson.steps.forEach(step => {
+                    // Check if description is a string before inserting
+                    const description = typeof step.description === 'string' ? step.description : '步驟描述缺失';
+                    const rationale = typeof step.rationale === 'string' ? step.rationale : '目的缺失';
+
+                    html += `<li><span class="font-semibold">${description}</span><p class="text-sm text-gray-600 ml-4">目的: ${rationale}</p></li>`;
+                });
+            } else {
+                html += '<li>無法解析清單內容。</li>';
+            }
+
+            html += '</ol>';
+            checklistResult.innerHTML = html;
+
+        } catch (error) {
+            console.error("Gemini API Error for Checklist:", error);
+            checklistResult.innerHTML = '<span class="text-red-500">連線錯誤或 JSON 解析失敗。請重試。</span>';
+        } finally {
+            checklistBtn.disabled = false;
+        }
+    }
+    window.generateChecklist = generateChecklist; // Expose to global scope for onclick
+
+});
+</script>
+
+</body>
+</html>
