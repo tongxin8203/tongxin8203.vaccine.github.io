@@ -107,7 +107,7 @@ $settings = New-ScheduledTaskSettingsSet `
     -WakeToRun -ExecutionTimeLimit (New-TimeSpan -Minutes 30) `
     -MultipleInstances IgnoreNew
 $principal = New-ScheduledTaskPrincipal `
-    -UserId $env:USERNAME -LogonType InteractiveToken -RunLevel Highest
+    -UserId $env:USERNAME -LogonType Interactive -RunLevel Highest
 
 $existing = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
 if ($existing) { Unregister-ScheduledTask -TaskName $taskName -Confirm:$false }
