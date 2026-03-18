@@ -1,0 +1,7 @@
+{
+    "scan_folder": "D:\\WeChat Files",
+    "output_folder": "D:\\wechat-summary",
+    "file_types": [".pdf", ".pptx", ".ppt", ".docx", ".doc", ".xlsx", ".xls", ".txt"],
+    "max_summary_length": 500,
+    "schedule_time": "21:00"
+}
