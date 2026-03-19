@@ -14,8 +14,8 @@ import traceback
 import subprocess
 
 
-def check_dependencies():
-    """检查必要的依赖库是否已安装，返回缺失列表"""
+def check_and_install_dependencies():
+    """检查必要的依赖库，缺失则自动安装"""
     deps = {
         "PyPDF2": "PyPDF2",
         "pptx": "python-pptx",
@@ -32,7 +32,24 @@ def check_dependencies():
             __import__(module_name)
         except ImportError:
             missing.append(pip_name)
-    return missing
+
+    if not missing:
+        return
+
+    print(f"检测到缺少依赖库: {', '.join(missing)}")
+    print("正在自动安装...")
+    try:
+        subprocess.check_call(
+            [sys.executable, "-m", "pip", "install"] + missing,
+            stdout=sys.stdout, stderr=sys.stderr
+        )
+        print("依赖安装完成!")
+    except subprocess.CalledProcessError:
+        print("=" * 50)
+        print("自动安装失败，请手动运行:")
+        print(f"  {sys.executable} -m pip install {' '.join(missing)}")
+        print("=" * 50)
+        sys.exit(1)
 
 
 # --- 文件读取模块 ---
@@ -191,7 +208,7 @@ def _extract_unicode_text(data):
     try:
         decoded = data.decode("utf-16-le", errors="ignore")
         # 提取可读文本片段（至少4个字符）
-        chunks = re.findall(r'[\u4e00-\u9fff\u3000-\u303f\uff00-\uffefa-zA-Z0-9\s，。！？、；：""''（）《》\-\.\,\;\:\!\?\(\)\[\]\+\=\/\\\@\#\$\%\&\*]{4,}', decoded)
+        chunks = re.findall(r'[\u4e00-\u9fff\u3000-\u303f\uff00-\uffefa-zA-Z0-9\s，。！？、；：\u201c\u201d\u2018\u2019（）《》\-.,;:!?()\[\]+=/@#$%&*\\]{4,}', decoded)
         for chunk in chunks:
             cleaned = chunk.strip()
             if cleaned and len(cleaned) >= 4:
@@ -410,16 +427,8 @@ def format_size(size_bytes):
 
 
 def main():
-    # 检查依赖
-    missing = check_dependencies()
-    if missing:
-        print("=" * 50)
-        print("缺少以下依赖库，请先安装:")
-        print(f"  pip install {' '.join(missing)}")
-        print("或运行:")
-        print("  pip install -r requirements.txt")
-        print("=" * 50)
-        sys.exit(1)
+    # 检查并自动安装依赖
+    check_and_install_dependencies()
 
     # 加载配置
     script_dir = os.path.dirname(os.path.abspath(__file__))
