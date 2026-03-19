@@ -8,6 +8,7 @@
 import json
 import os
 import sys
+import re
 import datetime
 import traceback
 import subprocess
@@ -20,6 +21,8 @@ def check_dependencies():
         "pptx": "python-pptx",
         "docx": "python-docx",
         "openpyxl": "openpyxl",
+        "xlrd": "xlrd",
+        "olefile": "olefile",
         "reportlab": "reportlab",
         "chardet": "chardet",
     }
@@ -68,11 +71,16 @@ def read_pptx(filepath):
 
 
 def read_ppt_legacy(filepath):
-    """读取旧版 .ppt 文件（尝试用 python-pptx，失败则提示）"""
+    """读取旧版 .ppt 文件"""
+    # 先尝试 python-pptx（有些 .ppt 其实是新格式改了扩展名）
     try:
-        return read_pptx(filepath)
+        result = read_pptx(filepath)
+        if not result.startswith("[读取失败"):
+            return result
     except Exception:
-        return "[读取失败: .ppt 是旧版 Office 格式，python-pptx 不支持。请将文件另存为 .pptx 格式后重试]"
+        pass
+    # 使用 olefile 从二进制 PPT 中提取文本
+    return _extract_text_from_ole(filepath, "ppt")
 
 
 def read_docx(filepath):
@@ -87,11 +95,16 @@ def read_docx(filepath):
 
 
 def read_doc_legacy(filepath):
-    """读取旧版 .doc 文件（尝试用 python-docx，失败则提示）"""
+    """读取旧版 .doc 文件"""
+    # 先尝试 python-docx（有些 .doc 其实是新格式改了扩展名）
     try:
-        return read_docx(filepath)
+        result = read_docx(filepath)
+        if not result.startswith("[读取失败"):
+            return result
     except Exception:
-        return "[读取失败: .doc 是旧版 Office 格式，python-docx 不支持。请将文件另存为 .docx 格式后重试]"
+        pass
+    # 使用 olefile 从二进制 DOC 中提取文本
+    return _extract_text_from_ole(filepath, "doc")
 
 
 def read_xlsx(filepath):
@@ -115,11 +128,130 @@ def read_xlsx(filepath):
 
 
 def read_xls_legacy(filepath):
-    """读取旧版 .xls 文件（尝试用 openpyxl，失败则提示）"""
+    """读取旧版 .xls 文件（使用 xlrd）"""
+    import xlrd
     try:
-        return read_xlsx(filepath)
+        wb = xlrd.open_workbook(filepath)
+        text_parts = []
+        for sheet in wb.sheets():
+            text_parts.append(f"[工作表: {sheet.name}]")
+            for row_idx in range(sheet.nrows):
+                cells = []
+                for col_idx in range(sheet.ncols):
+                    val = sheet.cell_value(row_idx, col_idx)
+                    cells.append(str(val) if val else "")
+                line = " | ".join(cells).strip()
+                if line.replace("|", "").strip():
+                    text_parts.append(line)
+        return "\n".join(text_parts)
+    except Exception as e:
+        return f"[读取失败: {e}]"
+
+
+def _extract_text_from_ole(filepath, file_type):
+    """从旧版 Office 二进制文件 (OLE2) 中提取文本"""
+    import olefile
+    try:
+        if not olefile.isOleFile(filepath):
+            return "[读取失败: 文件不是有效的 OLE 格式]"
+
+        ole = olefile.OleFileIO(filepath)
+        text = ""
+
+        if file_type == "doc":
+            # Word .doc：文本存储在 "WordDocument" 流中
+            # 尝试从 Word Document 流提取
+            if ole.exists("WordDocument"):
+                data = ole.openstream("WordDocument").read()
+                # 尝试提取 UTF-16LE 编码的文本
+                text = _extract_unicode_text(data)
+            # 备用：遍历所有流提取文本
+            if not text.strip():
+                text = _extract_all_streams_text(ole)
+
+        elif file_type == "ppt":
+            # PowerPoint .ppt：文本通常在 "PowerPoint Document" 流中
+            if ole.exists("PowerPoint Document"):
+                data = ole.openstream("PowerPoint Document").read()
+                text = _extract_ppt_text_records(data)
+            if not text.strip():
+                text = _extract_all_streams_text(ole)
+
+        ole.close()
+        return text if text.strip() else "[文件内容为空或无法提取文本]"
+
+    except Exception as e:
+        return f"[读取失败: {e}]"
+
+
+def _extract_unicode_text(data):
+    """从二进制数据中提取 Unicode (UTF-16LE) 文本片段"""
+    # 查找连续的 UTF-16LE 字符序列（中文和ASCII混合）
+    results = []
+    try:
+        decoded = data.decode("utf-16-le", errors="ignore")
+        # 提取可读文本片段（至少4个字符）
+        chunks = re.findall(r'[\u4e00-\u9fff\u3000-\u303f\uff00-\uffefa-zA-Z0-9\s，。！？、；：""''（）《》\-\.\,\;\:\!\?\(\)\[\]\+\=\/\\\@\#\$\%\&\*]{4,}', decoded)
+        for chunk in chunks:
+            cleaned = chunk.strip()
+            if cleaned and len(cleaned) >= 4:
+                results.append(cleaned)
     except Exception:
-        return "[读取失败: .xls 是旧版 Office 格式，openpyxl 不支持。请将文件另存为 .xlsx 格式后重试]"
+        pass
+    return "\n".join(results)
+
+
+def _extract_ppt_text_records(data):
+    """从 PPT 二进制数据中提取文本记录"""
+    # PPT 文本记录类型：
+    # 0x0FA0 (4000) = TextCharsAtom (UTF-16LE)
+    # 0x0FA8 (4008) = TextBytesAtom (ASCII/Latin-1)
+    texts = []
+    pos = 0
+    while pos < len(data) - 8:
+        # 每个记录: 2字节版本/实例, 2字节类型, 4字节长度
+        rec_type = int.from_bytes(data[pos + 2:pos + 4], 'little')
+        rec_len = int.from_bytes(data[pos + 4:pos + 8], 'little')
+
+        if rec_len < 0 or rec_len > len(data) - pos - 8:
+            pos += 1
+            continue
+
+        if rec_type == 0x0FA0:  # TextCharsAtom - UTF-16LE
+            try:
+                text = data[pos + 8:pos + 8 + rec_len].decode('utf-16-le', errors='ignore').strip()
+                if text and len(text) >= 2:
+                    texts.append(text)
+            except Exception:
+                pass
+            pos += 8 + rec_len
+        elif rec_type == 0x0FA8:  # TextBytesAtom - ASCII
+            try:
+                text = data[pos + 8:pos + 8 + rec_len].decode('latin-1', errors='ignore').strip()
+                if text and len(text) >= 2:
+                    texts.append(text)
+            except Exception:
+                pass
+            pos += 8 + rec_len
+        else:
+            pos += 1
+
+    return "\n".join(texts)
+
+
+def _extract_all_streams_text(ole):
+    """从 OLE 文件所有流中提取可读文本（备用方案）"""
+    results = []
+    for stream_path in ole.listdir():
+        try:
+            data = ole.openstream(stream_path).read()
+            # 尝试 UTF-16LE
+            text = _extract_unicode_text(data)
+            if text.strip():
+                results.append(text.strip())
+        except Exception:
+            continue
+    return "\n".join(results)
 
 
 def read_txt(filepath):
