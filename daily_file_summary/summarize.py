@@ -434,16 +434,53 @@ def make_summary(text, max_length=500):
     return text[:max_length] + "..."
 
 
-def scan_folder(folder, file_types):
-    """扫描文件夹，返回匹配的文件列表"""
+def scan_folder(folder, file_types, date_from=None):
+    """扫描文件夹，返回匹配的文件列表。
+    date_from: 如果指定，只返回修改时间 >= date_from 的文件。
+    """
+    if date_from is not None:
+        ts_from = datetime.datetime.combine(date_from, datetime.time.min).timestamp()
+    else:
+        ts_from = None
+
     matched = []
     for root, _dirs, files in os.walk(folder):
         for fname in files:
             ext = os.path.splitext(fname)[1].lower()
-            if ext in file_types:
-                matched.append(os.path.join(root, fname))
+            if ext not in file_types:
+                continue
+            fpath = os.path.join(root, fname)
+            if ts_from is not None:
+                try:
+                    mtime = os.path.getmtime(fpath)
+                    if mtime < ts_from:
+                        continue
+                except OSError:
+                    continue
+            matched.append(fpath)
     matched.sort()
     return matched
+
+
+def _load_scan_state(output_folder):
+    """读取上次扫描状态，返回上次扫描日期或 None（首次运行）"""
+    state_path = os.path.join(output_folder, ".last_scan.json")
+    if not os.path.exists(state_path):
+        return None
+    try:
+        with open(state_path, "r", encoding="utf-8") as f:
+            state = json.load(f)
+        return state.get("last_scan_date")
+    except Exception:
+        return None
+
+
+def _save_scan_state(output_folder, date_str):
+    """保存本次扫描状态"""
+    state_path = os.path.join(output_folder, ".last_scan.json")
+    state = {"last_scan_date": date_str}
+    with open(state_path, "w", encoding="utf-8") as f:
+        json.dump(state, f, ensure_ascii=False, indent=2)
 
 
 def generate_summary_pdf(summaries, output_path, date_str):
@@ -592,14 +629,28 @@ def main():
     today = datetime.date.today()
     date_str = today.strftime("%Y-%m-%d")
 
+    # 判断扫描日期范围：首次运行扫描本月，之后只扫描当天
+    last_scan = _load_scan_state(output_folder)
+    if last_scan is None:
+        # 首次运行：扫描本月文件
+        date_from = today.replace(day=1)
+        scan_mode = "本月（首次运行）"
+    else:
+        # 非首次运行：只扫描今天的文件
+        date_from = today
+        scan_mode = "仅今日"
+
     print(f"扫描文件夹: {scan_folder_path}")
     print(f"输出文件夹: {output_folder}")
     print(f"日期: {date_str}")
+    print(f"扫描范围: {scan_mode}（文件修改时间 >= {date_from}）")
+    if last_scan:
+        print(f"上次扫描: {last_scan}")
     print()
 
     # 扫描文件
     file_types_lower = [t.lower() for t in file_types]
-    files = scan_folder(scan_folder_path, file_types_lower)
+    files = scan_folder(scan_folder_path, file_types_lower, date_from=date_from)
     print(f"找到 {len(files)} 个文件")
 
     if not files:
@@ -671,6 +722,9 @@ def main():
 
     print(f"生成摘要 PDF: {output_path}")
     generate_summary_pdf(summaries, output_path, date_str)
+
+    # 保存扫描状态，下次运行时只扫描当天文件
+    _save_scan_state(output_folder, date_str)
     print("完成!")
 
 
