@@ -517,8 +517,20 @@ def main():
     print()
     print(f"处理完成: 成功 {success_count} 个, 失败 {fail_count} 个, 共 {success_count + fail_count} 个")
 
-    # 生成 PDF
+    # 生成 PDF（文件被占用时自动换名）
     output_path = os.path.join(output_folder, f"{date_str}.pdf")
+    for suffix in range(20):
+        if suffix > 0:
+            output_path = os.path.join(output_folder, f"{date_str}_{suffix}.pdf")
+        try:
+            # 测试文件是否可写
+            with open(output_path, "ab") as _:
+                pass
+            break
+        except PermissionError:
+            print(f"  文件被占用: {output_path}，尝试换名...")
+            continue
+
     print(f"生成摘要 PDF: {output_path}")
     generate_summary_pdf(summaries, output_path, date_str)
     print("完成!")
