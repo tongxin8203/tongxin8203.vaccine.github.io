@@ -54,23 +54,95 @@ def check_and_install_dependencies():
 
 # --- 文件读取模块 ---
 
+def _check_file_readable(filepath):
+    """检查文件是否可读，返回 None 表示正常，否则返回错误信息"""
+    if not os.path.exists(filepath):
+        return "[读取失败: 文件不存在]"
+    size = os.path.getsize(filepath)
+    if size == 0:
+        return "[读取失败: 文件大小为 0 字节（可能是未完整下载）]"
+    if size < 10:
+        return "[读取失败: 文件过小，可能已损坏]"
+    return None
+
+
+def _try_read_as_text(filepath):
+    """尝试将任意文件当作文本读取（最后的备选方案）"""
+    import chardet
+    try:
+        with open(filepath, "rb") as f:
+            raw = f.read(8192)
+        detected = chardet.detect(raw)
+        enc = detected.get("encoding")
+        conf = detected.get("confidence", 0)
+        if enc and conf > 0.5:
+            with open(filepath, "rb") as f:
+                text = f.read().decode(enc, errors="replace")
+            # 过滤掉大量不可读字符的情况
+            printable = sum(1 for c in text[:500] if c.isprintable() or c in '\n\r\t')
+            if printable > len(text[:500]) * 0.5:
+                return text
+    except Exception:
+        pass
+    return None
+
+
+def _try_read_as_html(filepath):
+    """有些 .xls/.doc 文件实际上是 HTML 格式（网页另存为）"""
+    try:
+        with open(filepath, "rb") as f:
+            head = f.read(512)
+        # 检查是否包含 HTML 标签
+        head_text = head.decode("utf-8", errors="ignore").lower()
+        if "<html" in head_text or "<table" in head_text or "<!doctype" in head_text:
+            import chardet
+            with open(filepath, "rb") as f:
+                raw = f.read()
+            detected = chardet.detect(raw)
+            enc = detected.get("encoding", "utf-8") or "utf-8"
+            text = raw.decode(enc, errors="replace")
+            # 简单去除 HTML 标签
+            clean = re.sub(r'<[^>]+>', ' ', text)
+            clean = re.sub(r'\s+', ' ', clean).strip()
+            if len(clean) > 20:
+                return clean
+    except Exception:
+        pass
+    return None
+
+
 def read_pdf(filepath):
     """读取 PDF 文件文本内容"""
+    err = _check_file_readable(filepath)
+    if err:
+        return err
     from PyPDF2 import PdfReader
     try:
-        reader = PdfReader(filepath)
+        reader = PdfReader(filepath, strict=False)
         text_parts = []
         for page in reader.pages:
-            t = page.extract_text()
-            if t:
-                text_parts.append(t)
-        return "\n".join(text_parts)
-    except Exception as e:
-        return f"[读取失败: {e}]"
+            try:
+                t = page.extract_text()
+                if t:
+                    text_parts.append(t)
+            except Exception:
+                continue
+        if text_parts:
+            return "\n".join(text_parts)
+    except Exception:
+        pass
+    # 备选：当作文本读
+    fallback = _try_read_as_text(filepath)
+    if fallback:
+        return fallback
+    return "[读取失败: PDF 文件损坏或不完整（可能未下载完成）]"
 
 
 def read_pptx(filepath):
     """读取 PPTX 文件文本内容"""
+    err = _check_file_readable(filepath)
+    if err:
+        return err
     from pptx import Presentation
     try:
         prs = Presentation(filepath)
@@ -89,6 +161,9 @@ def read_pptx(filepath):
 
 def read_ppt_legacy(filepath):
     """读取旧版 .ppt 文件"""
+    err = _check_file_readable(filepath)
+    if err:
+        return err
     # 先尝试 python-pptx（有些 .ppt 其实是新格式改了扩展名）
     try:
         result = read_pptx(filepath)
@@ -97,11 +172,21 @@ def read_ppt_legacy(filepath):
     except Exception:
         pass
     # 使用 olefile 从二进制 PPT 中提取文本
-    return _extract_text_from_ole(filepath, "ppt")
+    result = _extract_text_from_ole(filepath, "ppt")
+    if not result.startswith("[读取失败") and not result.startswith("[文件内容为空"):
+        return result
+    # 备选：当作文本读
+    fallback = _try_read_as_text(filepath)
+    if fallback:
+        return fallback
+    return result
 
 
 def read_docx(filepath):
     """读取 DOCX 文件文本内容"""
+    err = _check_file_readable(filepath)
+    if err:
+        return err
     from docx import Document
     try:
         doc = Document(filepath)
@@ -113,6 +198,9 @@ def read_docx(filepath):
 
 def read_doc_legacy(filepath):
     """读取旧版 .doc 文件"""
+    err = _check_file_readable(filepath)
+    if err:
+        return err
     # 先尝试 python-docx（有些 .doc 其实是新格式改了扩展名）
     try:
         result = read_docx(filepath)
@@ -120,12 +208,26 @@ def read_doc_legacy(filepath):
             return result
     except Exception:
         pass
+    # 试试是不是 HTML 格式（网页另存为 .doc 很常见）
+    html_result = _try_read_as_html(filepath)
+    if html_result:
+        return html_result
     # 使用 olefile 从二进制 DOC 中提取文本
-    return _extract_text_from_ole(filepath, "doc")
+    result = _extract_text_from_ole(filepath, "doc")
+    if not result.startswith("[读取失败") and not result.startswith("[文件内容为空"):
+        return result
+    # 备选：当作文本读
+    fallback = _try_read_as_text(filepath)
+    if fallback:
+        return fallback
+    return result
 
 
 def read_xlsx(filepath):
     """读取 Excel 文件文本内容"""
+    err = _check_file_readable(filepath)
+    if err:
+        return err
     from openpyxl import load_workbook
     try:
         wb = load_workbook(filepath, read_only=True, data_only=True)
@@ -140,12 +242,28 @@ def read_xlsx(filepath):
                     text_parts.append(line)
         wb.close()
         return "\n".join(text_parts)
-    except Exception as e:
-        return f"[读取失败: {e}]"
+    except Exception:
+        pass
+    # openpyxl 失败，尝试用 xlrd（可能是旧格式误用了 .xlsx 扩展名）
+    result = read_xls_legacy(filepath)
+    if not result.startswith("[读取失败"):
+        return result
+    # 试试是不是 HTML 格式
+    html_result = _try_read_as_html(filepath)
+    if html_result:
+        return html_result
+    # 备选：当作文本读
+    fallback = _try_read_as_text(filepath)
+    if fallback:
+        return fallback
+    return "[读取失败: 文件格式不兼容（可能是加密文件或未完整下载）]"
 
 
 def read_xls_legacy(filepath):
     """读取旧版 .xls 文件（使用 xlrd）"""
+    err = _check_file_readable(filepath)
+    if err:
+        return err
     import xlrd
     try:
         wb = xlrd.open_workbook(filepath)
@@ -161,8 +279,17 @@ def read_xls_legacy(filepath):
                 if line.replace("|", "").strip():
                     text_parts.append(line)
         return "\n".join(text_parts)
-    except Exception as e:
-        return f"[读取失败: {e}]"
+    except Exception:
+        pass
+    # 试试是不是 HTML 格式（很多网页导出的 .xls 实际上是 HTML）
+    html_result = _try_read_as_html(filepath)
+    if html_result:
+        return html_result
+    # 备选：当作文本读
+    fallback = _try_read_as_text(filepath)
+    if fallback:
+        return fallback
+    return "[读取失败: .xls 文件格式不兼容（可能是加密文件、网页格式或未完整下载）]"
 
 
 def _extract_text_from_ole(filepath, file_type):
@@ -525,6 +652,8 @@ def main():
     # 显示统计
     print()
     print(f"处理完成: 成功 {success_count} 个, 失败 {fail_count} 个, 共 {success_count + fail_count} 个")
+    if fail_count > 0:
+        print("提示: 失败的文件通常是微信未完整下载、加密文件或网页另存格式，可忽略。")
 
     # 生成 PDF（文件被占用时自动换名）
     output_path = os.path.join(output_folder, f"{date_str}.pdf")
