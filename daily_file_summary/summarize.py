@@ -10,6 +10,27 @@ import os
 import sys
 import datetime
 import traceback
+import subprocess
+
+
+def check_dependencies():
+    """检查必要的依赖库是否已安装，返回缺失列表"""
+    deps = {
+        "PyPDF2": "PyPDF2",
+        "pptx": "python-pptx",
+        "docx": "python-docx",
+        "openpyxl": "openpyxl",
+        "reportlab": "reportlab",
+        "chardet": "chardet",
+    }
+    missing = []
+    for module_name, pip_name in deps.items():
+        try:
+            __import__(module_name)
+        except ImportError:
+            missing.append(pip_name)
+    return missing
+
 
 # --- 文件读取模块 ---
 
@@ -29,7 +50,7 @@ def read_pdf(filepath):
 
 
 def read_pptx(filepath):
-    """读取 PPT/PPTX 文件文本内容"""
+    """读取 PPTX 文件文本内容"""
     from pptx import Presentation
     try:
         prs = Presentation(filepath)
@@ -46,8 +67,16 @@ def read_pptx(filepath):
         return f"[读取失败: {e}]"
 
 
+def read_ppt_legacy(filepath):
+    """读取旧版 .ppt 文件（尝试用 python-pptx，失败则提示）"""
+    try:
+        return read_pptx(filepath)
+    except Exception:
+        return "[读取失败: .ppt 是旧版 Office 格式，python-pptx 不支持。请将文件另存为 .pptx 格式后重试]"
+
+
 def read_docx(filepath):
-    """读取 Word 文件文本内容"""
+    """读取 DOCX 文件文本内容"""
     from docx import Document
     try:
         doc = Document(filepath)
@@ -55,6 +84,14 @@ def read_docx(filepath):
         return "\n".join(text_parts)
     except Exception as e:
         return f"[读取失败: {e}]"
+
+
+def read_doc_legacy(filepath):
+    """读取旧版 .doc 文件（尝试用 python-docx，失败则提示）"""
+    try:
+        return read_docx(filepath)
+    except Exception:
+        return "[读取失败: .doc 是旧版 Office 格式，python-docx 不支持。请将文件另存为 .docx 格式后重试]"
 
 
 def read_xlsx(filepath):
@@ -77,6 +114,14 @@ def read_xlsx(filepath):
         return f"[读取失败: {e}]"
 
 
+def read_xls_legacy(filepath):
+    """读取旧版 .xls 文件（尝试用 openpyxl，失败则提示）"""
+    try:
+        return read_xlsx(filepath)
+    except Exception:
+        return "[读取失败: .xls 是旧版 Office 格式，openpyxl 不支持。请将文件另存为 .xlsx 格式后重试]"
+
+
 def read_txt(filepath):
     """读取 TXT 文件文本内容，自动检测编码"""
     import chardet
@@ -94,11 +139,11 @@ def read_txt(filepath):
 READERS = {
     ".pdf": read_pdf,
     ".pptx": read_pptx,
-    ".ppt": read_pptx,
+    ".ppt": read_ppt_legacy,
     ".docx": read_docx,
-    ".doc": read_docx,
+    ".doc": read_doc_legacy,
     ".xlsx": read_xlsx,
-    ".xls": read_xlsx,
+    ".xls": read_xls_legacy,
     ".txt": read_txt,
 }
 
@@ -233,6 +278,17 @@ def format_size(size_bytes):
 
 
 def main():
+    # 检查依赖
+    missing = check_dependencies()
+    if missing:
+        print("=" * 50)
+        print("缺少以下依赖库，请先安装:")
+        print(f"  pip install {' '.join(missing)}")
+        print("或运行:")
+        print("  pip install -r requirements.txt")
+        print("=" * 50)
+        sys.exit(1)
+
     # 加载配置
     script_dir = os.path.dirname(os.path.abspath(__file__))
     config_path = os.path.join(script_dir, "config.json")
@@ -271,6 +327,7 @@ def main():
     print(f"扫描文件夹: {scan_folder_path}")
     print(f"输出文件夹: {output_folder}")
     print(f"日期: {date_str}")
+    print()
 
     # 扫描文件
     file_types_lower = [t.lower() for t in file_types]
@@ -283,6 +340,9 @@ def main():
 
     # 逐个读取并生成摘要
     summaries = []
+    success_count = 0
+    fail_count = 0
+
     for filepath in files:
         filename = os.path.basename(filepath)
         ext = os.path.splitext(filename)[1].lower()
@@ -290,7 +350,7 @@ def main():
         if not reader:
             continue
 
-        print(f"  处理: {filename}")
+        print(f"  处理: {filename} ...", end=" ")
         try:
             text = reader(filepath)
             summary = make_summary(text, max_summary_length)
@@ -298,13 +358,32 @@ def main():
             summary = f"[处理失败: {e}]"
             traceback.print_exc()
 
+        # 判断是否读取成功
+        is_failed = summary.startswith("[读取失败") or summary.startswith("[处理失败") or summary.startswith("[文件内容为空")
+        if is_failed:
+            fail_count += 1
+            print(f"失败")
+            print(f"    原因: {summary}")
+        else:
+            success_count += 1
+            print(f"成功")
+
+        try:
+            fsize = format_size(os.path.getsize(filepath))
+        except OSError:
+            fsize = "未知"
+
         summaries.append({
             "filename": filename,
             "filepath": filepath,
             "filetype": ext,
-            "filesize": format_size(os.path.getsize(filepath)),
+            "filesize": fsize,
             "summary": summary,
         })
+
+    # 显示统计
+    print()
+    print(f"处理完成: 成功 {success_count} 个, 失败 {fail_count} 个, 共 {success_count + fail_count} 个")
 
     # 生成 PDF
     output_path = os.path.join(output_folder, f"{date_str}.pdf")
