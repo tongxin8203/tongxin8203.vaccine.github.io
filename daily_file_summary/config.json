@@ -1,5 +1,5 @@
 {
-    "scan_folder": "D:\\WeChat Files",
+    "scan_folder": "D:\\wechat\\WeChat Files\\tongxin820324\\FileStorage",
     "output_folder": "D:\\wechat-summary",
     "file_types": [".pdf", ".pptx", ".ppt", ".docx", ".doc", ".xlsx", ".xls", ".txt"],
     "max_summary_length": 500,
