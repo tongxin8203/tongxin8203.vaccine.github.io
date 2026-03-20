@@ -434,14 +434,18 @@ def make_summary(text, max_length=500):
     return text[:max_length] + "..."
 
 
-def scan_folder(folder, file_types, date_from=None):
+def scan_folder(folder, file_types, date_from=None, date_to=None):
     """扫描文件夹，返回匹配的文件列表。
-    date_from: 如果指定，只返回修改时间 >= date_from 的文件。
+    date_from: 如果指定，只返回修改时间 >= date_from 00:00 的文件。
+    date_to: 如果指定，只返回修改时间 < date_to+1天 00:00 的文件。
     """
+    ts_from = None
+    ts_to = None
     if date_from is not None:
         ts_from = datetime.datetime.combine(date_from, datetime.time.min).timestamp()
-    else:
-        ts_from = None
+    if date_to is not None:
+        next_day = date_to + datetime.timedelta(days=1)
+        ts_to = datetime.datetime.combine(next_day, datetime.time.min).timestamp()
 
     matched = []
     for root, _dirs, files in os.walk(folder):
@@ -450,37 +454,115 @@ def scan_folder(folder, file_types, date_from=None):
             if ext not in file_types:
                 continue
             fpath = os.path.join(root, fname)
-            if ts_from is not None:
-                try:
-                    mtime = os.path.getmtime(fpath)
-                    if mtime < ts_from:
-                        continue
-                except OSError:
-                    continue
+            try:
+                mtime = os.path.getmtime(fpath)
+            except OSError:
+                continue
+            if ts_from is not None and mtime < ts_from:
+                continue
+            if ts_to is not None and mtime >= ts_to:
+                continue
             matched.append(fpath)
     matched.sort()
     return matched
 
 
-def _load_scan_state(output_folder):
-    """读取上次扫描状态，返回上次扫描日期或 None（首次运行）"""
-    state_path = os.path.join(output_folder, ".last_scan.json")
-    if not os.path.exists(state_path):
-        return None
-    try:
-        with open(state_path, "r", encoding="utf-8") as f:
-            state = json.load(f)
-        return state.get("last_scan_date")
-    except Exception:
-        return None
+def _choose_date_range(today):
+    """交互式选择扫描日期范围，返回 (date_from, date_to, 描述文本)"""
+    print("=" * 50)
+    print("请选择要扫描的文件日期范围：")
+    print("  1. 仅今天")
+    print("  2. 最近 3 天")
+    print("  3. 最近 7 天")
+    print("  4. 本月")
+    print("  5. 自定义日期")
+    print("  6. 全部文件（不限日期）")
+    print("=" * 50)
+
+    while True:
+        choice = input("请输入选项 [1-6]（默认 1）: ").strip()
+        if choice == "" or choice == "1":
+            return today, today, "仅今天"
+        elif choice == "2":
+            return today - datetime.timedelta(days=2), today, "最近 3 天"
+        elif choice == "3":
+            return today - datetime.timedelta(days=6), today, "最近 7 天"
+        elif choice == "4":
+            return today.replace(day=1), today, "本月"
+        elif choice == "5":
+            return _input_custom_date(today)
+        elif choice == "6":
+            return None, None, "全部文件"
+        else:
+            print("  无效选项，请重新输入。")
 
 
-def _save_scan_state(output_folder, date_str):
-    """保存本次扫描状态"""
-    state_path = os.path.join(output_folder, ".last_scan.json")
-    state = {"last_scan_date": date_str}
-    with open(state_path, "w", encoding="utf-8") as f:
-        json.dump(state, f, ensure_ascii=False, indent=2)
+def _input_custom_date(today):
+    """让用户输入自定义日期范围"""
+    print()
+    print("请输入日期，格式: YYYY-MM-DD")
+    while True:
+        start_str = input(f"  开始日期（默认 {today}）: ").strip()
+        if not start_str:
+            date_from = today
+            break
+        try:
+            date_from = datetime.datetime.strptime(start_str, "%Y-%m-%d").date()
+            break
+        except ValueError:
+            print("  日期格式不正确，请使用 YYYY-MM-DD 格式。")
+
+    while True:
+        end_str = input(f"  结束日期（默认 {today}）: ").strip()
+        if not end_str:
+            date_to = today
+            break
+        try:
+            date_to = datetime.datetime.strptime(end_str, "%Y-%m-%d").date()
+            break
+        except ValueError:
+            print("  日期格式不正确，请使用 YYYY-MM-DD 格式。")
+
+    if date_from > date_to:
+        date_from, date_to = date_to, date_from
+
+    return date_from, date_to, f"自定义: {date_from} 至 {date_to}"
+
+
+def _parse_date_arg(date_arg, today):
+    """解析命令行 --date 参数，返回 (date_from, date_to, 描述文本)"""
+    arg = date_arg.lower()
+    if arg == "today":
+        return today, today, "仅今天"
+    elif arg == "3d":
+        return today - datetime.timedelta(days=2), today, "最近 3 天"
+    elif arg == "week":
+        return today - datetime.timedelta(days=6), today, "最近 7 天"
+    elif arg == "month":
+        return today.replace(day=1), today, "本月"
+    elif arg == "all":
+        return None, None, "全部文件"
+    else:
+        # 尝试解析为具体日期 YYYY-MM-DD 或范围 YYYY-MM-DD~YYYY-MM-DD
+        if "~" in arg:
+            parts = arg.split("~", 1)
+            try:
+                d1 = datetime.datetime.strptime(parts[0], "%Y-%m-%d").date()
+                d2 = datetime.datetime.strptime(parts[1], "%Y-%m-%d").date()
+                if d1 > d2:
+                    d1, d2 = d2, d1
+                return d1, d2, f"自定义: {d1} 至 {d2}"
+            except ValueError:
+                pass
+        else:
+            try:
+                d = datetime.datetime.strptime(arg, "%Y-%m-%d").date()
+                return d, d, f"指定日期: {d}"
+            except ValueError:
+                pass
+        print(f"警告: 无法解析日期参数 '{date_arg}'，将使用交互式选择。")
+        return None  # 返回 None 表示需要交互选择
+
 
 
 def generate_summary_pdf(summaries, output_path, date_str):
@@ -610,16 +692,27 @@ def main():
     file_types = config.get("file_types", [".pdf", ".pptx", ".docx", ".xlsx", ".txt"])
     max_summary_length = config.get("max_summary_length", 500)
 
-    # 支持命令行覆盖扫描路径
-    if len(sys.argv) > 1:
-        scan_folder_path = sys.argv[1]
-    if len(sys.argv) > 2:
-        output_folder = sys.argv[2]
+    # 解析命令行参数
+    date_arg = None
+    positional_args = []
+    i = 1
+    while i < len(sys.argv):
+        if sys.argv[i] == "--date" and i + 1 < len(sys.argv):
+            date_arg = sys.argv[i + 1]
+            i += 2
+        else:
+            positional_args.append(sys.argv[i])
+            i += 1
+
+    if len(positional_args) > 0:
+        scan_folder_path = positional_args[0]
+    if len(positional_args) > 1:
+        output_folder = positional_args[1]
 
     if not scan_folder_path or not os.path.isdir(scan_folder_path):
         print(f"扫描文件夹不存在: {scan_folder_path}")
         print("请修改 config.json 中的 scan_folder 或通过命令行参数指定:")
-        print(f"  python {sys.argv[0]} <扫描路径> [输出路径]")
+        print(f"  python {sys.argv[0]} [--date today|3d|week|month|all|YYYY-MM-DD] <扫描路径> [输出路径]")
         sys.exit(1)
 
     # 确保输出目录存在
@@ -629,28 +722,38 @@ def main():
     today = datetime.date.today()
     date_str = today.strftime("%Y-%m-%d")
 
-    # 判断扫描日期范围：首次运行扫描本月，之后只扫描当天
-    last_scan = _load_scan_state(output_folder)
-    if last_scan is None:
-        # 首次运行：扫描本月文件
-        date_from = today.replace(day=1)
-        scan_mode = "本月（首次运行）"
+    # 确定扫描日期范围
+    if date_arg:
+        # 命令行指定了 --date 参数（适合定时任务静默运行）
+        result = _parse_date_arg(date_arg, today)
+        if result is None:
+            # 解析失败，回退到交互选择
+            date_from, date_to, scan_mode = _choose_date_range(today)
+        else:
+            date_from, date_to, scan_mode = result
+    elif sys.stdin.isatty():
+        # 交互式终端，显示选择菜单
+        date_from, date_to, scan_mode = _choose_date_range(today)
     else:
-        # 非首次运行：只扫描今天的文件
-        date_from = today
-        scan_mode = "仅今日"
+        # 非交互式（定时任务等），默认只扫描今天
+        date_from, date_to, scan_mode = today, today, "仅今天（自动模式）"
 
+    print()
     print(f"扫描文件夹: {scan_folder_path}")
     print(f"输出文件夹: {output_folder}")
     print(f"日期: {date_str}")
-    print(f"扫描范围: {scan_mode}（文件修改时间 >= {date_from}）")
-    if last_scan:
-        print(f"上次扫描: {last_scan}")
+    if date_from and date_to:
+        if date_from == date_to:
+            print(f"扫描范围: {scan_mode}（文件修改时间: {date_from}）")
+        else:
+            print(f"扫描范围: {scan_mode}（文件修改时间: {date_from} 至 {date_to}）")
+    else:
+        print(f"扫描范围: {scan_mode}")
     print()
 
     # 扫描文件
     file_types_lower = [t.lower() for t in file_types]
-    files = scan_folder(scan_folder_path, file_types_lower, date_from=date_from)
+    files = scan_folder(scan_folder_path, file_types_lower, date_from=date_from, date_to=date_to)
     print(f"找到 {len(files)} 个文件")
 
     if not files:
@@ -723,8 +826,6 @@ def main():
     print(f"生成摘要 PDF: {output_path}")
     generate_summary_pdf(summaries, output_path, date_str)
 
-    # 保存扫描状态，下次运行时只扫描当天文件
-    _save_scan_state(output_folder, date_str)
     print("完成!")
 
 
