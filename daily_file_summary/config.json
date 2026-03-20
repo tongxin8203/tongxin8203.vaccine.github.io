@@ -3,5 +3,10 @@
     "output_folder": "D:\\wechat-summary",
     "file_types": [".pdf", ".pptx", ".ppt", ".docx", ".doc", ".xlsx", ".xls", ".txt"],
     "max_summary_length": 500,
-    "schedule_time": "21:00"
+    "schedule_time": "21:00",
+    "extra_scan_folders": [
+        {"name": "桌面", "path": "%USERPROFILE%\\Desktop"},
+        {"name": "下载", "path": "%USERPROFILE%\\Downloads"},
+        {"name": "文档", "path": "%USERPROFILE%\\Documents"}
+    ]
 }

@@ -618,6 +618,71 @@ def _parse_date_arg(date_arg, today):
         return None  # 返回 None 表示需要交互选择
 
 
+def _expand_path(path):
+    """展开路径中的环境变量（如 %USERPROFILE%）"""
+    return os.path.expandvars(os.path.expanduser(path))
+
+
+def _choose_scan_folder(default_folder, extra_folders):
+    """交互式选择扫描路径，默认使用微信路径，10秒无响应自动执行。
+    返回选中的文件夹路径。
+    """
+    # 构建选项列表
+    options = []
+    default_name = "微信文件"
+    if default_folder:
+        options.append(("微信文件", default_folder))
+
+    for item in extra_folders:
+        name = item.get("name", "")
+        path = _expand_path(item.get("path", ""))
+        if path:
+            options.append((name, path))
+
+    if not options:
+        return default_folder
+
+    print("=" * 50)
+    print("请选择要扫描的文件夹：")
+    for idx, (name, path) in enumerate(options, 1):
+        exists = "✓" if os.path.isdir(path) else "✗"
+        default_tag = "（默认）" if idx == 1 else ""
+        print(f"  {idx}. [{exists}] {name}{default_tag}")
+        print(f"       {path}")
+    custom_idx = len(options) + 1
+    print(f"  {custom_idx}. 输入自定义路径")
+    print("=" * 50)
+
+    choice = _input_with_timeout(f"请输入选项 [1-{custom_idx}]: ", timeout=10)
+
+    if choice == "":
+        # 超时，使用默认
+        print(f">> 已选择: {options[0][0]} ({options[0][1]})")
+        return options[0][1]
+
+    try:
+        num = int(choice)
+    except ValueError:
+        print(f"  无效选项 '{choice}'，使用默认: {options[0][0]}")
+        return options[0][1]
+
+    if 1 <= num <= len(options):
+        selected_name, selected_path = options[num - 1]
+        print(f">> 已选择: {selected_name} ({selected_path})")
+        return selected_path
+    elif num == custom_idx:
+        custom = input("  请输入文件夹路径: ").strip()
+        custom = _expand_path(custom)
+        if custom:
+            print(f">> 已选择: {custom}")
+            return custom
+        else:
+            print("  路径为空，使用默认。")
+            return options[0][1]
+    else:
+        print(f"  无效选项，使用默认: {options[0][0]}")
+        return options[0][1]
+
 
 def generate_summary_pdf(summaries, output_path, date_str):
     """生成汇总 PDF 文件"""
@@ -745,14 +810,19 @@ def main():
     output_folder = config.get("output_folder", "D:\\wechat-summary")
     file_types = config.get("file_types", [".pdf", ".pptx", ".docx", ".xlsx", ".txt"])
     max_summary_length = config.get("max_summary_length", 500)
+    extra_scan_folders = config.get("extra_scan_folders", [])
 
     # 解析命令行参数
     date_arg = None
+    folder_arg = None
     positional_args = []
     i = 1
     while i < len(sys.argv):
         if sys.argv[i] == "--date" and i + 1 < len(sys.argv):
             date_arg = sys.argv[i + 1]
+            i += 2
+        elif sys.argv[i] == "--folder" and i + 1 < len(sys.argv):
+            folder_arg = sys.argv[i + 1]
             i += 2
         else:
             positional_args.append(sys.argv[i])
@@ -763,12 +833,6 @@ def main():
     if len(positional_args) > 1:
         output_folder = positional_args[1]
 
-    if not scan_folder_path or not os.path.isdir(scan_folder_path):
-        print(f"扫描文件夹不存在: {scan_folder_path}")
-        print("请修改 config.json 中的 scan_folder 或通过命令行参数指定:")
-        print(f"  python {sys.argv[0]} [--date today|3d|week|month|all|YYYY-MM-DD] <扫描路径> [输出路径]")
-        sys.exit(1)
-
     # 确保输出目录存在
     os.makedirs(output_folder, exist_ok=True)
 
@@ -776,17 +840,33 @@ def main():
     today = datetime.date.today()
     date_str = today.strftime("%Y-%m-%d")
 
+    # 确定扫描路径和日期范围
+    is_interactive = sys.stdin.isatty() and not folder_arg and not date_arg and not positional_args
+
+    if folder_arg:
+        # 命令行指定了 --folder
+        scan_folder_path = _expand_path(folder_arg)
+    elif is_interactive:
+        # 交互式终端，显示路径选择菜单
+        scan_folder_path = _choose_scan_folder(scan_folder_path, extra_scan_folders)
+        print()
+
+    if not scan_folder_path or not os.path.isdir(scan_folder_path):
+        print(f"扫描文件夹不存在: {scan_folder_path}")
+        print("请修改 config.json 中的 scan_folder 或通过命令行参数指定:")
+        print(f"  python {sys.argv[0]} [--folder <路径>] [--date today|3d|week|month|all|YYYY-MM-DD]")
+        sys.exit(1)
+
     # 确定扫描日期范围
     if date_arg:
         # 命令行指定了 --date 参数（适合定时任务静默运行）
         result = _parse_date_arg(date_arg, today)
         if result is None:
-            # 解析失败，回退到交互选择
             date_from, date_to, scan_mode = _choose_date_range(today)
         else:
             date_from, date_to, scan_mode = result
-    elif sys.stdin.isatty():
-        # 交互式终端，显示选择菜单
+    elif is_interactive:
+        # 交互式终端，显示日期选择菜单
         date_from, date_to, scan_mode = _choose_date_range(today)
     else:
         # 非交互式（定时任务等），默认只扫描今天
