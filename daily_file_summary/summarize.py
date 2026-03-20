@@ -467,11 +467,59 @@ def scan_folder(folder, file_types, date_from=None, date_to=None):
     return matched
 
 
+def _input_with_timeout(prompt, timeout=10):
+    """带超时的输入，超时返回空字符串（即使用默认值）"""
+    if sys.platform == "win32":
+        import msvcrt
+        print(prompt, end="", flush=True)
+        chars = []
+        start = datetime.datetime.now()
+        remaining = timeout
+        while remaining > 0:
+            # 显示倒计时
+            print(f"\r{prompt}（{remaining}秒后自动选择默认）", end="", flush=True)
+            # 检查1秒内是否有按键
+            check_start = datetime.datetime.now()
+            while (datetime.datetime.now() - check_start).total_seconds() < 1:
+                if msvcrt.kbhit():
+                    ch = msvcrt.getwch()
+                    if ch == "\r" or ch == "\n":
+                        print()
+                        return "".join(chars)
+                    elif ch == "\b":
+                        if chars:
+                            chars.pop()
+                            print("\b \b", end="", flush=True)
+                    else:
+                        chars.append(ch)
+                        print(ch, end="", flush=True)
+                import time
+                time.sleep(0.05)
+            elapsed = (datetime.datetime.now() - start).total_seconds()
+            remaining = max(0, timeout - int(elapsed))
+        print()
+        if chars:
+            return "".join(chars)
+        return ""
+    else:
+        import select
+        print(f"{prompt}（{timeout}秒后自动选择默认）", end="", flush=True)
+        ready, _, _ = select.select([sys.stdin], [], [], timeout)
+        if ready:
+            result = sys.stdin.readline().strip()
+            return result
+        else:
+            print()
+            return ""
+
+
 def _choose_date_range(today):
-    """交互式选择扫描日期范围，返回 (date_from, date_to, 描述文本)"""
+    """交互式选择扫描日期范围，返回 (date_from, date_to, 描述文本)
+    默认选择"仅今天"，10秒无响应自动执行。
+    """
     print("=" * 50)
     print("请选择要扫描的文件日期范围：")
-    print("  1. 仅今天")
+    print("  1. 仅今天（默认）")
     print("  2. 最近 3 天")
     print("  3. 最近 7 天")
     print("  4. 本月")
@@ -479,22 +527,28 @@ def _choose_date_range(today):
     print("  6. 全部文件（不限日期）")
     print("=" * 50)
 
-    while True:
-        choice = input("请输入选项 [1-6]（默认 1）: ").strip()
-        if choice == "" or choice == "1":
-            return today, today, "仅今天"
-        elif choice == "2":
-            return today - datetime.timedelta(days=2), today, "最近 3 天"
-        elif choice == "3":
-            return today - datetime.timedelta(days=6), today, "最近 7 天"
-        elif choice == "4":
-            return today.replace(day=1), today, "本月"
-        elif choice == "5":
-            return _input_custom_date(today)
-        elif choice == "6":
-            return None, None, "全部文件"
-        else:
-            print("  无效选项，请重新输入。")
+    choice = _input_with_timeout("请输入选项 [1-6]: ", timeout=10)
+
+    if choice == "" or choice == "1":
+        print(">> 已选择: 仅今天")
+        return today, today, "仅今天"
+    elif choice == "2":
+        print(">> 已选择: 最近 3 天")
+        return today - datetime.timedelta(days=2), today, "最近 3 天"
+    elif choice == "3":
+        print(">> 已选择: 最近 7 天")
+        return today - datetime.timedelta(days=6), today, "最近 7 天"
+    elif choice == "4":
+        print(">> 已选择: 本月")
+        return today.replace(day=1), today, "本月"
+    elif choice == "5":
+        return _input_custom_date(today)
+    elif choice == "6":
+        print(">> 已选择: 全部文件")
+        return None, None, "全部文件"
+    else:
+        print(f"  无效选项 '{choice}'，使用默认: 仅今天")
+        return today, today, "仅今天"
 
 
 def _input_custom_date(today):
